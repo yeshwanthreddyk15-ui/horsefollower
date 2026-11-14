@@ -97,10 +97,20 @@ WM_QUIT = 0x0012
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MOD_NOREPEAT = 0x4000
+SPI_GETWORKAREA = 0x0030
 
 
 class Size(ctypes.Structure):
     _fields_ = [("cx", wintypes.LONG), ("cy", wintypes.LONG)]
+
+
+class Rect(ctypes.Structure):
+    _fields_ = [
+        ("left", wintypes.LONG),
+        ("top", wintypes.LONG),
+        ("right", wintypes.LONG),
+        ("bottom", wintypes.LONG),
+    ]
 
 
 class BlendFunction(ctypes.Structure):
@@ -159,6 +169,13 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+user32.SystemParametersInfoW.argtypes = [
+    wintypes.UINT,
+    wintypes.UINT,
+    ctypes.POINTER(Rect),
+    wintypes.UINT,
+]
+user32.SystemParametersInfoW.restype = wintypes.BOOL
 user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
 user32.GetCursorPos.restype = wintypes.BOOL
 user32.GetParent.argtypes = [wintypes.HWND]
@@ -338,6 +355,7 @@ blend_function = BlendFunction(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
 following = True
 going_home = False
 at_home = False
+closing = False
 facing_angle = 0.0
 gallop_time = 0.0
 last_cursor = wintypes.POINT()
@@ -589,6 +607,12 @@ tk.Button(
     command=send_horse_home,
     width=10,
 ).pack(side="left")
+tk.Button(
+    panel,
+    text="Quit Horse Pointer",
+    command=lambda: stop_overlay(),
+    width=18,
+).pack(anchor="w", pady=(6, 0))
 tk.Label(
     panel,
     text="Ctrl+Alt+A: stop   Ctrl+Alt+F: start   Ctrl+Alt+Q: quit",
@@ -601,13 +625,18 @@ screen_height = user32.GetSystemMetrics(1)
 controls.geometry(
     f"+12+{max(0, screen_height - controls.winfo_height() - 48)}"
 )
+controls.protocol("WM_DELETE_WINDOW", lambda: stop_overlay())
 
-screen_width = user32.GetSystemMetrics(0)
-stable_width, stable_height = 134, 110
-stable_x = max(0, screen_width - stable_width - 18)
-stable_y = max(0, screen_height - stable_height - 18)
-home_x = stable_x + 67
-home_y = stable_y + 76
+work_area = Rect()
+if not user32.SystemParametersInfoW(
+    SPI_GETWORKAREA, 0, ctypes.byref(work_area), 0
+):
+    raise ctypes.WinError(ctypes.get_last_error())
+stable_width, stable_height = 108, 88
+stable_x = max(work_area.left, work_area.right - stable_width - 18)
+stable_y = max(work_area.top, work_area.bottom - stable_height - 18)
+home_x = stable_x + 54
+home_y = stable_y + 61
 stable = tk.Toplevel(root)
 stable.overrideredirect(True)
 stable.attributes("-topmost", True)
@@ -624,36 +653,36 @@ stable_canvas = tk.Canvas(
 )
 stable_canvas.pack()
 stable_canvas.create_polygon(
-    14, 46, 67, 8, 120, 46,
+    11, 37, 54, 6, 97, 37,
     fill="#9b4935",
     outline="#542b25",
     width=2,
 )
 stable_canvas.create_rectangle(
-    24, 45, 110, 99,
+    20, 36, 89, 80,
     fill="#dfbd83",
     outline="#704f37",
     width=2,
 )
 stable_canvas.create_rectangle(
-    49, 53, 85, 99,
+    39, 43, 69, 80,
     fill="#573b2d",
     outline="#35271f",
     width=2,
 )
 stable_canvas.create_line(
-    67, 54, 67, 97,
+    54, 44, 54, 79,
     fill="#c39b68",
     width=2,
 )
 stable_canvas.create_rectangle(
-    46, 41, 88, 52,
+    37, 33, 71, 42,
     fill="#f3e5c7",
     outline="#704f37",
     width=1,
 )
 stable_canvas.create_text(
-    67, 46,
+    54, 37,
     text="STABLE",
     fill="#35271f",
     font=("Segoe UI", 7, "bold"),
@@ -690,9 +719,18 @@ if not user32.SetWindowPos(
 
 
 def stop_overlay():
+    global closing
+    if closing:
+        return
+    closing = True
     flush_settings()
+    if stable.winfo_exists():
+        stable.destroy()
+    if controls.winfo_exists():
+        controls.destroy()
     root.quit()
-    root.destroy()
+    if root.winfo_exists():
+        root.destroy()
 
 
 def poll_hotkeys():
